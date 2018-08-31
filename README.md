@@ -1,16 +1,18 @@
 # springboot-microservices-playground-v2
 
-## Before you start.
 
-a) be sure to have the java 10 JDK installed on your local machine, for ex. executing:
+
+## Before you start
+
+a) Be sure to have the java 10 JDK installed on your local machine, for ex. executing:
 ```
 java --version
 ```
 
-b)  be sure maven is also installed.
+b) Verify that maven is also installed.
 
 
-## To run the infrastructure.
+## To run the infrastructure
 1) Set the ENV vars CONFIG_REPO_USERNAME, CONFIG_REPO_PASSWORD, CONFIG_REPO_URI, needed by the configuration service to access the conf data, for example with:
 
 ```
