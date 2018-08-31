@@ -16,7 +16,7 @@ b) Verify that maven is also installed.
 1) Set the ENV vars CONFIG_REPO_USERNAME, CONFIG_REPO_PASSWORD, CONFIG_REPO_URI, needed by the configuration service to access the conf data, for example with:
 
 ```
-export CONFIG_REPO_USERNAME=<whatever username>\
+export CONFIG_REPO_USERNAME=<whatever username> \
 && export CONFIG_REPO_PASSWORD=<whatever password> \
 && export CONFIG_REPO_URI="<whatever repo URI>"
 ```
