@@ -1,0 +1,36 @@
+logging:
+  level:
+    com.netflix: WARN
+    org.springframework.web: WARN
+    de.cdelmonte: DEBUG
+
+server.port: 8901
+spring.cloud.config.uri: http://localhost:8886
+
+server:
+  servlet:
+    context-path: /auth
+    
+spring.sleuth.sampler.probability: 1
+
+security.oauth2.resource.id: oauth2_id
+
+spring.datasource.platform:  "postgres"
+spring.jpa.show-sql: "true"
+spring.datasource.url: "jdbc:postgresql://localhost:5432/mw_local"
+spring.datasource.driver-class-name: "org.postgresql.Driver"
+
+spring.datasource.username: "postgres"
+spring.datasource.password: "p0stgr@s"
+spring.jpa.properties.hibernate.dialect: "org.hibernate.dialect.PostgreSQLDialect"
+spring.jpa.hibernate.ddl-auto: create-drop
+eureka.instance.preferIpAddress: true
+spring.jpa.database-platform: org.hibernate.dialect.PostgreSQL9Dialect
+spring.datasource.testWhileIdle: "true"
+spring.datasource.validationQuery: "SELECT 1"
+spring.batch.initialize-schema: always
+
+
+signing.key: 345345fsdfsf5345
+security.oauth2.user.middlelayer.client: test_middlelayer_client
+security.oauth2.user.middlelayer.pwd: test_middlelayer_pw

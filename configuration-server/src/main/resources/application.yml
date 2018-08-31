@@ -1,0 +1,16 @@
+server.port: 8886
+  
+spring.cloud.config.discovery.enabled: true
+spring.cloud.config.server.encrypt.enabled: false
+spring.cloud.config.server.git.uri: https://bitbucket.org/maplesyrupgroup/config-repo.git
+spring.cloud.config.server.git.searchPaths: authenticationservice,merchantsimporterservice,merchantssearchservice,semknoxservice,zuulservice
+
+eureka:
+  instance:
+    preferIpAddress: true
+  client:
+    registerWithEureka: true
+    fetchRegistry: true
+
+spring.sleuth.sampler.probability: 1
+

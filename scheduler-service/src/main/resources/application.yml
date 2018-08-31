@@ -1,0 +1,20 @@
+server:
+  port: 8475
+
+logging:
+  level:
+    com.netflix: WARN
+    org.springframework.web: WARN
+    de.cdelmonte.shoop: DEBUG
+
+spring:
+  kafka:
+    schema-registry: http://schema-registry:8081
+    consumer:
+      group-id: schedulerService
+      auto-offset-reset: earliest 
+    
+
+kafka:
+  topic:
+    import-merchants: schedulerService.import-merchants

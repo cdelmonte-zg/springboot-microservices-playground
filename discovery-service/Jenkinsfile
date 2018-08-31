@@ -1,0 +1,344 @@
+#!/usr/bin/env groovy
+
+import groovy.json.JsonSlurperClassic
+
+def date = System.currentTimeMillis()
+def myChoices = listReleaseCandidates()
+
+pipeline {
+    agent any
+    environment {	
+    		AWS_PROJECT_NAME="eureka-server"
+        REPO="eurekasvr"
+        DOCKER_IMAGE="mw-eurekasvr" 
+        AWS_STAGING_CLUSTER = "ms-infrastructure-staging"
+        AWS_PROD_CLUSTER = "ms-infrastructure-production"
+        
+        DOCKER_USERNAME = credentials('jenkins-docker-secret-access-key')
+        DOCKER_PASSWORD = credentials('jenkins-docker-access-pwd')
+        
+        BITBUCKET_USER = credentials('jenkins-bitbucket-access-uid')
+        BITBUCKET_PWD = credentials('jenkins-bitbucket-access-pwd')
+        
+        AWS_STAGING_PROFILE_NAME = credentials('jenkins-aws-profile-name')
+        AWS_STAGING_ACCESS_KEY = credentials('jenkins-aws-access-key')
+        AWS_STAGING_SECRET_KEY = credentials('jenkins-aws-secret-key')
+       	AWS_STAGING_REGION="eu-central-1"
+       	
+        AWS_PROD_PROFILE_NAME = credentials('jenkins-aws-profile-name')
+        AWS_PROD_ACCESS_KEY = credentials('jenkins-aws-access-key')
+        AWS_PROD_SECRET_KEY = credentials('jenkins-aws-secret-key')
+        AWS_PROD_REGION="eu-central-1"
+
+        JWT_SECRET_KEY = credentials('jenkins-ms-jwt-secret-key')
+        
+		MIDDLELAYER_CLIENT = credentials('jenkins-ms-jwt-middlelayer-client')
+        MIDDLELAYER_PWD = credentials('jenkins-ms-jwt-middlelayey-pwd')
+	
+	    BUILD_NAME = "rc-${env.BUILD_NUMBER}"
+        COMMIT = "${env.GIT_COMMIT}"
+    }
+    parameters {
+    		string(name: 'RELEASE_TAG', defaultValue: 'release_xx-yy-zz', description: 'Release tag')
+        choice(choices: "STAGING\nPRODUCTION", description: 'Select environment to deploy to.', name: 'deployEnvironment')
+        choice(choices: myChoices, description: 'Which build? Select docker tag.', name: 'BUILD_NAME_PROD')
+        booleanParam(defaultValue: false, description: 'refresh parameters', name: 'refreshParams')
+    }
+    stages {
+        stage('Refresh Parameters') {
+    			 when { 
+                expression { params.refreshParams }
+            }
+    			steps {
+          		echo "Refreshing parameters set: " + params.refreshParams
+            }
+    		}
+    		stage('Starting') {
+            when { 
+                expression { ! params.refreshParams }
+            }
+            steps { 
+                echo "Building with build name: $BUILD_NAME for commit: $COMMIT in environment: " + params.deployEnvironment
+            		sendBuildStatus("INPROGRESS")
+            }
+        }
+        stage('Build') {
+            when { 
+                expression { params.deployEnvironment != 'PRODUCTION' && ! params.refreshParams }
+            }
+            steps { 
+                echo "Building with commit of $BUILD_NAME for commit $COMMIT"
+				dir('') {
+				    sh 'mvn clean generate-sources package docker:build'
+				}
+            }
+        }
+        stage('Push docker image') {
+        		when { 
+                expression { 
+                		env.GIT_BRANCH == 'origin/master' && params.deployEnvironment == 'STAGING' && ! params.refreshParams
+                }
+            }
+            steps {	
+				echo "Pushing docker images to docker hub."
+				pushToDocker()
+			}
+		}
+		stage("Push release to git repo") {
+        		when { 
+                expression { 
+                		env.GIT_BRANCH == 'origin/master' && ! params.refreshParams
+                }
+            }
+            steps {
+            		echo "Pushing commit and tags to bitbucket."
+				commitAndPush(params.deployEnvironment)
+				setBuildTagOnCommit(params.deployEnvironment)
+			}
+		}
+		stage('Remove docker image from Jenkins server') {
+            when { 
+                expression { 
+                		params.deployEnvironment != 'PRODUCTION' && ! params.refreshParams
+                	}
+            }
+            steps {
+             	echo "Removing docker image from Jenkins server."
+				removeDockerImage()
+			}
+		}
+		stage('Deploy to AWS') {
+            when { 
+                expression { 
+                    	env.GIT_BRANCH == 'origin/master' && ! params.refreshParams
+                }
+            }
+            steps {
+             	echo "Launching ${BUILD_NAME} IN AMAZON ECS"
+             	pushToAWS(params.deployEnvironment)
+            }
+		}
+		stage('Run smoke tests') {
+            when {
+                expression { 
+                		env.GIT_BRANCH == 'origin/master' && ! params.refreshParams
+                	}
+            }
+            steps {	
+             	echo "Running smoke tests."
+             	
+             	sleep(100)
+             	build job: 'test.platform.microworld', wait: true, propagate: true, parameters: [
+					string(name: 'deployEnvironment', value: params.deployEnvironment)
+				]
+			}
+		}
+		stage('Update parameters') {
+            when {
+                expression { 
+                		env.GIT_BRANCH == 'origin/master' && params.deployEnvironment == 'STAGING' && ! params.refreshParams
+                	}
+            }
+            steps {	
+             	echo "Refreshing parameters."
+             	build job: env.JOB_NAME, wait: false, propagate: false, parameters: [
+					booleanParam(name: 'refreshParams', value: true)
+				]
+			}
+		}
+	}
+	post {
+        always {
+            echo 'One way or another, I have finished.'  
+            deleteDir()
+        }
+        success {
+			echo 'I succeeeded!'
+			sendBuildStatus("SUCCESSFUL")
+        }
+        unstable {
+            echo 'I am unstable :/'
+            sendBuildStatus("FAILED")
+        }
+        failure {
+        		echo 'I failed :('
+        		sendBuildStatus("FAILED")
+        		mail to: 'c.monte@shoop.de',
+           		subject: "Failed Pipeline: ${currentBuild.fullDisplayName}",
+           		body: "Something is wrong with ${env.BUILD_URL}"
+        }
+        changed {
+            echo 'Things were different before...'
+        }
+    }
+}
+
+def sendBuildStatus(String state) {	
+	def key = (env.BUILD_NAME).take(40)
+	
+	sh """
+		echo ${state}
+		curl -X POST -u ${BITBUCKET_USER}:${BITBUCKET_PWD} \\
+						https://api.bitbucket.org/2.0/repositories/maplesyrupgroup/${REPO}/commit/${COMMIT}/statuses/build \\
+						-H 'Cache-Control: no-cache' \\
+						-H 'Content-Type: application/json' \\
+						-d '{\"state\":\"${state}\",\"key\":\"${key}\",\"name\":\"${BUILD_NAME}\",\"url\":\"${BUILD_URL}\"}';\\
+	"""
+}
+
+def commitAndPush(String deployEnvironment) {	
+	def branch
+	def message
+	
+	if (deployEnvironment == "STAGING") {
+			branch = 'rc'
+			message = env.BUILD_NAME
+	} else if (deployEnvironment == "PRODUCTION") {
+			branch = 'release'
+			message = params.RELEASE_TAG
+	} else throw new Exception("deployEnvironment no properly passed as parameter")
+	
+	sh """
+		curl -X POST -u ${BITBUCKET_USER}:${BITBUCKET_PWD} \\
+						https://api.bitbucket.org/2.0/repositories/maplesyrupgroup/${REPO}/src \\
+						-H 'Cache-Control: no-cache' \\
+						-F branch=${branch} -F message=${message}\\
+	"""
+}
+
+def setBuildTagOnCommit(String deployEnvironment) {
+	if (deployEnvironment == "STAGING") {
+		tag = env.BUILD_NAME
+	} else if (deployEnvironment == "PRODUCTION") {
+		tag = params.RELEASE_TAG
+	} else throw new Exception("Wrong deployEnvironment")
+	
+	echo "Setting build tag $tag for repository"
+	
+	sh """
+		curl -X POST -u ${BITBUCKET_USER}:${BITBUCKET_PWD} \\
+			https://api.bitbucket.org/2.0/repositories/maplesyrupgroup/${REPO}/refs/tags \\
+			-H 'Cache-Control: no-cache' \\
+			-H 'Content-Type: application/json' \\
+			-d '{\"name\":\"${tag}\",\"target\":{\"hash\":\"${COMMIT}\"}}'; \\
+
+	"""
+}
+
+def pushToDocker() {
+	sh """
+		docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}
+		docker push cdelmonte/${DOCKER_IMAGE}:${BUILD_NAME}
+	"""
+}
+
+def removeDockerImage() {
+	sh """
+		docker rmi cdelmonte/${DOCKER_IMAGE}:${BUILD_NAME}
+	"""
+}
+
+def pushToAWS(String deployEnvironment) {
+	def accessKey
+	def dockerFile
+	def region
+	def secretKey
+	def profileName
+	def tag
+	
+	if (deployEnvironment == "STAGING") {
+		accessKey = env.AWS_STAGING_ACCESS_KEY
+		dockerFile = 'docker/aws/staging/docker-compose.yml'
+		region = env.AWS_STAGING_REGION
+		secretKey = env.AWS_STAGING_SECRET_KEY
+		profileName = env.AWS_STAGING_PROFILE_NAME
+		cluster = env.AWS_STAGING_CLUSTER
+		tag = BUILD_NAME
+	} else if (deployEnvironment == "PRODUCTION") {
+		accessKey = env.AWS_PROD_ACCESS_KEY
+		dockerFile = 'docker/aws/production/docker-compose.yml'
+		region = env.AWS_PROD_REGION
+		secretKey = env.AWS_PROD_SECRET_KEY
+		profileName = env.AWS_PROD_PROFILE_NAME
+		tag = env.BUILD_NAME_PROD
+		cluster = env.AWS_PROD_CLUSTER
+	} else throw new Exception("Wrong deployEnvironment")
+
+	echo "Launching ${tag} IN AMAZON ${deployEnvironment}"
+	sh """
+		echo ${tag}
+
+		if ! type ecs-cli > /dev/null; then
+			  sudo curl -k -o /usr/local/bin/ecs-cli https://s3.amazonaws.com/amazon-ecs-cli/ecs-cli-linux-amd64-latest
+			sudo chmod +x /usr/local/bin/ecs-cli
+		fi
+					
+		ecs-cli configure profile --profile-name ${profileName} --access-key ${accessKey} --secret-key ${secretKey}
+		ecs-cli configure --region ${region} --cluster ${cluster}
+		ecs-cli compose --file ${dockerFile} --project-name ${AWS_PROJECT_NAME} service stop
+		ecs-cli compose --file ${dockerFile} --project-name ${AWS_PROJECT_NAME} service up	
+		rm -rf ~/.ecs
+	"""
+}
+
+def listReleaseCandidates() {
+	def getPassword = { username ->
+		def creds = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
+			com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials.class,
+			jenkins.model.Jenkins.instance
+		)
+
+		def c = creds.findResult { it.username == username ? it : null }
+
+		if (c) {
+		  	def password = c.password
+		  	
+		  	return password
+		}
+	}
+	
+	password = getPassword("docker-cm")
+	
+	token = getAuthTokenDockerHub('cdelmonte', password)
+	tags = getTagFromDockerHub('cdelmonte/mw-eurekasvr', token)
+	
+	return tags.join("\n")
+}
+
+def getTagFromDockerHub(imgName, authToken) {
+    def url = new URL("https://hub.docker.com/v2/repositories/${imgName}/tags")
+    def parsedJSON = parseJSON(url.getText(requestProperties:["Authorization":"JWT ${authToken}"]))
+
+    def tags = [];
+    for (result in parsedJSON.results) {
+    		tags << result.name      
+    }
+	
+	return tags
+}
+
+def getAuthTokenDockerHub(user, pass) {
+    def url = new URL("https://hub.docker.com/v2/users/login/")
+    def conn = url.openConnection()
+
+    conn.setRequestMethod("POST")
+    conn.setRequestProperty("Content-Type", "application/json")
+    conn.doOutput = true
+
+    def authString = "{\"username\": \"${user}\", \"password\": \"${pass}\"}"
+
+    def writer = new OutputStreamWriter(conn.outputStream)
+    writer.write(authString)
+    writer.flush()
+    writer.close()
+    conn.connect()
+
+    def result = parseJSON(conn.content.text)
+    
+    return result.token
+}
+
+def parseJSON(json) {
+    return new groovy.json.JsonSlurperClassic().parseText(json)
+}
+ 

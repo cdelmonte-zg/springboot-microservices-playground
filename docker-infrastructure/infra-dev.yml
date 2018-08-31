@@ -1,0 +1,248 @@
+version: '2'
+services:
+  eurekaserver:
+    image: cdelmonte/mw-eurekasvr:testing
+    ports:
+      - "8761:8761"
+    networks:
+      - infrastructure-network
+    depends_on:
+      - elasticsearch
+      - database
+  
+  configserver:
+    image: cdelmonte/mw-confsvr:testing
+    ports:
+       - "8886:8886"
+    environment:
+      ENCRYPT_KEY: "IMSYMMETRIC"
+      EUREKASERVER_URI: "http://eurekaserver:8761/eureka/"
+      EUREKASERVER_PORT: "8761"
+      ZIPKIN_URI: "http://zipkin:9411"
+      SIGNING_KEY: "345345fsdfsf5345"
+      CONFIG_REPO_USERNAME: $CONFIG_REPO_USERNAME 
+      CONFIG_REPO_PASSWORD: $CONFIG_REPO_PASSWORD
+      CONFIG_REPO_URI: $CONFIG_REPO_URI
+    depends_on:
+      - elasticsearch
+      - database
+      - eurekaserver
+    networks:
+      - infrastructure-network
+
+  zuulserver:
+    image: cdelmonte/mw-zuulsvr:testing
+    ports:
+      - "5555:5555"
+    environment:
+      PROFILE: "default"
+      SERVER_PORT: "5555"
+      CONFIGSERVER_URI: "http://configserver:8886"
+      EUREKASERVER_URI: "http://eurekaserver:8761/eureka/"
+      ZIPKIN_URI: "http://zipkin:9411"
+      EUREKASERVER_PORT: "8761"
+      ELASTICSEARCH_PORT: "9200"
+      CONFIGSERVER_PORT: "8886"
+      DATABASESERVER_PORT: "5432"
+      ZIPKIN_PORT: "9411"
+      SIGNING_KEY: "345345fsdfsf5345"
+    networks:
+      - infrastructure-network
+    depends_on:
+      - elasticsearch
+      - database
+      - zipkin
+      - eurekaserver
+      - configserver
+  
+  authentication-service:
+    image: cdelmonte/mw-authentication-service:testing
+    ports:
+      - "8901:8901"
+    networks:
+      - infrastructure-network
+    environment:
+      PROFILE: "default"
+      SERVER_PORT: "8901"
+      DATABASE_PORT: 5432
+      CONFIGSERVER_PORT: 8886
+      CONFIGSERVER_URI: "http://configserver:8886"
+      ZIPKIN_URI: "http://zipkin:9411"
+      ENCRYPT_KEY: "IMSYMMETRIC"
+      SIGNING_KEY: "345345fsdfsf5345"
+      MIDDLELAYER_CLIENT: test_middlelayer_client
+      MIDDLELAYER_PWD: test_middlelayer_pwd
+    depends_on:
+      - configserver
+ 
+  schedulerservice:
+    image: cdelmonte/mw-scheduler-service:testing
+    ports:
+      - "8475:8475"
+    environment:
+      PROFILE: "default"
+      SERVER_PORT: "8475"
+      KAFKA_BOOTSTRAP_SERVERS: "http://kafka:9092"
+      SCHEMA_REGISTRY_SVR: "http://schema-registry:8081"
+      FIXED_RATE_MILLISECONDS: 60000
+    networks:
+      - infrastructure-network
+    depends_on:
+      - kafka
+      - zookeeper
+      - schema-registry
+      - kafka-rest
+
+  zipkin:
+    image: openzipkin/zipkin
+    environment:
+      - STORAGE_TYPE=cassandra3
+      - CASSANDRA_ENSURE_SCHEMA=false
+      - CASSANDRA_CONTACT_POINTS=cassandra
+    ports:
+      - 9411:9411
+    networks:
+      - infrastructure-network
+    depends_on:
+      - zipkin-storage
+  
+  zipkin-storage:
+    image: openzipkin/zipkin-cassandra
+    container_name: cassandra
+    networks:
+      - infrastructure-network
+    ports:
+      - 9042:9042
+  
+  kibana:
+    image: docker.elastic.co/kibana/kibana:6.0.1
+    ports:
+      - 5601:5601
+    depends_on:
+      - elasticsearch
+    networks:
+      - infrastructure-network
+      
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:6.0.1
+    container_name: elasticsearch
+    environment:
+      - cluster.name=docker-cluster
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+    networks:
+      - infrastructure-network
+      
+  kafka:
+    image: confluentinc/cp-kafka:4.0.0
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - 9092:9092
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - infrastructure-network
+      
+  zookeeper:
+    image: confluentinc/cp-zookeeper:4.0.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - 2181:2181
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - infrastructure-network
+    
+  schema-registry:
+    image: confluentinc/cp-schema-registry:4.0.0
+    container_name: schema-registry
+    ports:
+      - 8081:8081
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: zookeeper:2181
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    depends_on:
+      - kafka
+      - zookeeper
+    networks:
+      - infrastructure-network
+
+  kafka-rest:
+    image: confluentinc/cp-kafka-rest:4.0.0
+    container_name: kafka-rest
+    ports:
+      - 8082:8082
+    environment:
+      KAFKA_REST_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_REST_HOST_NAME: kafka-rest
+      KAFKA_REST_LISTENERS: http://0.0.0.0:8082
+      KAFKA_REST_SCHEMA_REGISTRY_URL: http://schema-registry:8081  
+    depends_on:
+      - kafka
+      - zookeeper
+      - schema-registry
+    networks:
+      - infrastructure-network
+  
+  neo4j:
+    image: neo4j:3.4
+    container_name: neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - n4jdata:/data
+      - n4jdata:/logs
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 40000
+        hard: 40000
+    environment:
+      NEO4J_dbms_memory_pagecache_size: 4G
+ 
+  database:
+    image: postgres:latest
+    container_name: database
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=p0stgr@s
+      - POSTGRES_DB=mw_local
+    networks:
+      - infrastructure-network
+      
+  redis:
+    image: redis:alpine
+    ports:
+      - 6379:6379
+    networks:
+      - infrastructure-network
+  
+volumes:
+  esdata:
+    driver: local
+  n4jdata:
+    driver: local
+
+networks:
+  infrastructure-network:
+    driver: bridge

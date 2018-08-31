@@ -1,0 +1,8 @@
+{"namespace": "de.cdelmonte.schedulerservice.avro",
+  "type": "record",
+  "name": "Message",
+  "fields": [
+    {"name": "id", "type": "string"},
+    {"name": "text",  "type": ["string", "null"]}
+  ]
+}
