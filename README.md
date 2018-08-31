@@ -1,6 +1,15 @@
 # springboot-microservices-playground-v2
 
+- Before you start...
+a) be sure to have the java 10 JDK installed on your local machine, for ex. executing:
+```
+java --version
+```
 
+b)  be sure maven is also installed.
+
+
+- Running the infrastructure
 1) Set the ENV vars CONFIG_REPO_USERNAME, CONFIG_REPO_PASSWORD, CONFIG_REPO_URI, needed by the configuration service to access the conf data, for example with:
 
 ```
@@ -30,5 +39,4 @@ password=password2
 4) Use the obtained bearer token to access to the Zuul server and other reosurces
 
 
-5) check on zipkin if all works
-http://localhost:9411
+5) Use zipkin ( http://localhost:9411 ) to check if all works.
