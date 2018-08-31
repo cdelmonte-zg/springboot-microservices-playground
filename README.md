@@ -4,7 +4,7 @@
 
 ## Before you start
 
-a) Be sure to have the java 10 JDK installed on your local machine, for ex. executing:
+a) Be sure to have a java 10 JDK installed on your local machine, for ex. executing:
 ```
 java --version
 ```
